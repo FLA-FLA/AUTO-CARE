@@ -1,8 +1,10 @@
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,20 +20,38 @@ type Abastecimento = {
   km: string;
 };
 
-const CHAVE_COMBUSTIVEL = '@autocare_combustivel';
+function chaveUsuario(email: string, tipo: string) {
+  return `@autocare_${encodeURIComponent(email.trim().toLowerCase())}_${tipo}`;
+}
 
 export default function CombustivelScreen() {
   const [abastecimentos, setAbastecimentos] = useState<Abastecimento[]>([]);
+  const [emailUsuario, setEmailUsuario] = useState('');
 
   const carregarAbastecimentos = useCallback(async () => {
     try {
-      const dados = await AsyncStorage.getItem(CHAVE_COMBUSTIVEL);
+      const logado = await AsyncStorage.getItem('@autocare_logado');
+      const usuarioSalvo = await AsyncStorage.getItem('@autocare_usuario');
 
-      if (dados) {
-        setAbastecimentos(JSON.parse(dados));
-      } else {
-        setAbastecimentos([]);
+      if (logado !== 'true' || !usuarioSalvo) {
+        router.replace('/login');
+        return;
       }
+
+      const usuario = JSON.parse(usuarioSalvo);
+      const email = usuario.email?.trim().toLowerCase();
+
+      if (!email) {
+        router.replace('/login');
+        return;
+      }
+
+      setEmailUsuario(email);
+
+      const chave = chaveUsuario(email, 'combustivel');
+      const dados = await AsyncStorage.getItem(chave);
+
+      setAbastecimentos(dados ? JSON.parse(dados) : []);
     } catch (error) {
       console.log('ERRO AO CARREGAR ABASTECIMENTOS:', error);
     }
@@ -44,6 +64,35 @@ export default function CombustivelScreen() {
   );
 
   async function excluirAbastecimento(id: string) {
+    if (!emailUsuario) return;
+
+    const confirmarExclusao = async () => {
+      try {
+        const chave = chaveUsuario(emailUsuario, 'combustivel');
+
+        const dados = await AsyncStorage.getItem(chave);
+        const listaAtual: Abastecimento[] = dados ? JSON.parse(dados) : [];
+
+        const novaLista = listaAtual.filter(
+          (item) => item.id !== id
+        );
+
+        await AsyncStorage.setItem(chave, JSON.stringify(novaLista));
+
+        setAbastecimentos(novaLista);
+      } catch (error) {
+        console.log('ERRO AO EXCLUIR ABASTECIMENTO:', error);
+        Alert.alert('Erro', 'Não foi possível excluir o abastecimento.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('Deseja realmente excluir este abastecimento?')) {
+        await confirmarExclusao();
+      }
+      return;
+    }
+
     Alert.alert(
       'Excluir abastecimento',
       'Deseja realmente excluir este abastecimento?',
@@ -55,18 +104,7 @@ export default function CombustivelScreen() {
         {
           text: 'Excluir',
           style: 'destructive',
-          onPress: async () => {
-            const novaLista = abastecimentos.filter(
-              (item) => item.id !== id
-            );
-
-            await AsyncStorage.setItem(
-              CHAVE_COMBUSTIVEL,
-              JSON.stringify(novaLista)
-            );
-
-            setAbastecimentos(novaLista);
-          },
+          onPress: confirmarExclusao,
         },
       ]
     );
@@ -82,9 +120,7 @@ export default function CombustivelScreen() {
           <Text style={styles.voltar}>‹ Voltar</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>
-          Combustível
-        </Text>
+        <Text style={styles.title}>Combustível</Text>
 
         <Text style={styles.subtitle}>
           Controle seus abastecimentos
@@ -93,9 +129,7 @@ export default function CombustivelScreen() {
 
       <TouchableOpacity
         style={styles.addButton}
-        onPress={() =>
-          router.push('/adicionar-combustivel')
-        }
+        onPress={() => router.push('/adicionar-combustivel')}
       >
         <Text style={styles.addButtonText}>
           + Adicionar abastecimento
@@ -104,9 +138,7 @@ export default function CombustivelScreen() {
 
       {abastecimentos.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyIcon}>
-            ⛽
-          </Text>
+          <Text style={styles.emptyIcon}>⛽</Text>
 
           <Text style={styles.emptyTitle}>
             Nenhum abastecimento cadastrado
@@ -119,23 +151,16 @@ export default function CombustivelScreen() {
         </View>
       ) : (
         abastecimentos.map((item) => (
-          <View
-            key={item.id}
-            style={styles.card}
-          >
+          <View key={item.id} style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.abastecimentoTitle}>
                 ⛽ Abastecimento
               </Text>
 
               <TouchableOpacity
-                onPress={() =>
-                  excluirAbastecimento(item.id)
-                }
+                onPress={() => excluirAbastecimento(item.id)}
               >
-                <Text style={styles.delete}>
-                  Excluir
-                </Text>
+                <Text style={styles.delete}>Excluir</Text>
               </TouchableOpacity>
             </View>
 

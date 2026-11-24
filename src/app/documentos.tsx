@@ -1,8 +1,10 @@
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,17 +20,40 @@ type Documento = {
   observacao: string;
 };
 
-const CHAVE_DOCUMENTOS = '@autocare_documentos';
+function chaveUsuario(email: string, tipo: string) {
+  return `@autocare_${encodeURIComponent(email.trim().toLowerCase())}_${tipo}`;
+}
 
 export default function DocumentosScreen() {
   const [documentos, setDocumentos] = useState<Documento[]>([]);
+  const [emailUsuario, setEmailUsuario] = useState('');
 
   const carregarDocumentos = useCallback(async () => {
     try {
-      const dados = await AsyncStorage.getItem(CHAVE_DOCUMENTOS);
+      const logado = await AsyncStorage.getItem('@autocare_logado');
+      const usuarioSalvo = await AsyncStorage.getItem('@autocare_usuario');
+
+      if (logado !== 'true' || !usuarioSalvo) {
+        router.replace('/login');
+        return;
+      }
+
+      const usuario = JSON.parse(usuarioSalvo);
+      const email = usuario.email?.trim().toLowerCase();
+
+      if (!email) {
+        router.replace('/login');
+        return;
+      }
+
+      setEmailUsuario(email);
+
+      const chave = chaveUsuario(email, 'documentos');
+      const dados = await AsyncStorage.getItem(chave);
 
       if (dados) {
-        setDocumentos(JSON.parse(dados));
+        const lista = JSON.parse(dados);
+        setDocumentos(Array.isArray(lista) ? lista : []);
       } else {
         setDocumentos([]);
       }
@@ -44,6 +69,35 @@ export default function DocumentosScreen() {
   );
 
   async function excluirDocumento(id: string) {
+    if (!emailUsuario) return;
+
+    const confirmarExclusao = async () => {
+      try {
+        const chave = chaveUsuario(emailUsuario, 'documentos');
+
+        const dados = await AsyncStorage.getItem(chave);
+        const listaAtual: Documento[] = dados ? JSON.parse(dados) : [];
+
+        const novaLista = listaAtual.filter(
+          (item) => item.id !== id
+        );
+
+        await AsyncStorage.setItem(chave, JSON.stringify(novaLista));
+
+        setDocumentos(novaLista);
+      } catch (error) {
+        console.log('ERRO AO EXCLUIR DOCUMENTO:', error);
+        Alert.alert('Erro', 'Não foi possível excluir o documento.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('Deseja realmente excluir este documento?')) {
+        await confirmarExclusao();
+      }
+      return;
+    }
+
     Alert.alert(
       'Excluir documento',
       'Deseja realmente excluir este documento?',
@@ -55,18 +109,7 @@ export default function DocumentosScreen() {
         {
           text: 'Excluir',
           style: 'destructive',
-          onPress: async () => {
-            const novaLista = documentos.filter(
-              (item) => item.id !== id
-            );
-
-            await AsyncStorage.setItem(
-              CHAVE_DOCUMENTOS,
-              JSON.stringify(novaLista)
-            );
-
-            setDocumentos(novaLista);
-          },
+          onPress: confirmarExclusao,
         },
       ]
     );
@@ -93,9 +136,7 @@ export default function DocumentosScreen() {
 
       <TouchableOpacity
         style={styles.addButton}
-        onPress={() =>
-          router.push('/adicionar-documento')
-        }
+        onPress={() => router.push('/adicionar-documento')}
       >
         <Text style={styles.addButtonText}>
           + Adicionar documento
@@ -129,9 +170,7 @@ export default function DocumentosScreen() {
               </Text>
 
               <TouchableOpacity
-                onPress={() =>
-                  excluirDocumento(item.id)
-                }
+                onPress={() => excluirDocumento(item.id)}
               >
                 <Text style={styles.delete}>
                   Excluir

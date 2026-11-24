@@ -1,8 +1,10 @@
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,25 +17,52 @@ type Revisao = {
   tipo: string;
   data: string;
   km: string;
+  valor?: string;
   observacao: string;
 };
 
-const CHAVE_REVISOES = '@autocare_revisoes';
+function chaveUsuario(email: string, tipo: string) {
+  return `@autocare_${encodeURIComponent(email.trim().toLowerCase())}_${tipo}`;
+}
 
 export default function RevisoesScreen() {
   const [revisoes, setRevisoes] = useState<Revisao[]>([]);
+  const [emailUsuario, setEmailUsuario] = useState('');
 
   const carregarRevisoes = useCallback(async () => {
     try {
-      const dados = await AsyncStorage.getItem(CHAVE_REVISOES);
+      const logado = await AsyncStorage.getItem('@autocare_logado');
+      const usuarioSalvo = await AsyncStorage.getItem('@autocare_usuario');
+
+      if (logado !== 'true' || !usuarioSalvo) {
+        setRevisoes([]);
+        router.replace('/login');
+        return;
+      }
+
+      const usuario = JSON.parse(usuarioSalvo);
+      const email = usuario.email?.trim().toLowerCase();
+
+      if (!email) {
+        setRevisoes([]);
+        router.replace('/login');
+        return;
+      }
+
+      setEmailUsuario(email);
+
+      const chave = chaveUsuario(email, 'revisoes');
+      const dados = await AsyncStorage.getItem(chave);
 
       if (dados) {
-        setRevisoes(JSON.parse(dados));
+        const lista = JSON.parse(dados);
+        setRevisoes(Array.isArray(lista) ? lista : []);
       } else {
         setRevisoes([]);
       }
     } catch (error) {
       console.log('ERRO AO CARREGAR REVISÕES:', error);
+      setRevisoes([]);
     }
   }, []);
 
@@ -43,7 +72,46 @@ export default function RevisoesScreen() {
     }, [carregarRevisoes])
   );
 
-  async function excluirRevisao(id: string) {
+  async function executarExclusao(id: string) {
+    try {
+      if (!emailUsuario) return;
+
+      const novaLista = revisoes.filter(
+        (item) => item.id !== id
+      );
+
+      const chave = chaveUsuario(emailUsuario, 'revisoes');
+
+      await AsyncStorage.setItem(
+        chave,
+        JSON.stringify(novaLista)
+      );
+
+      setRevisoes(novaLista);
+    } catch (error) {
+      console.log('ERRO AO EXCLUIR REVISÃO:', error);
+
+      if (Platform.OS === 'web') {
+        window.alert('Não foi possível excluir a revisão.');
+      } else {
+        Alert.alert('Erro', 'Não foi possível excluir a revisão.');
+      }
+    }
+  }
+
+  function excluirRevisao(id: string) {
+    if (Platform.OS === 'web') {
+      const confirmar = window.confirm(
+        'Deseja realmente excluir esta revisão?'
+      );
+
+      if (confirmar) {
+        executarExclusao(id);
+      }
+
+      return;
+    }
+
     Alert.alert(
       'Excluir revisão',
       'Deseja realmente excluir esta revisão?',
@@ -55,18 +123,7 @@ export default function RevisoesScreen() {
         {
           text: 'Excluir',
           style: 'destructive',
-          onPress: async () => {
-            const novaLista = revisoes.filter(
-              (item) => item.id !== id
-            );
-
-            await AsyncStorage.setItem(
-              CHAVE_REVISOES,
-              JSON.stringify(novaLista)
-            );
-
-            setRevisoes(novaLista);
-          },
+          onPress: () => executarExclusao(id),
         },
       ]
     );
@@ -93,9 +150,7 @@ export default function RevisoesScreen() {
 
       <TouchableOpacity
         style={styles.addButton}
-        onPress={() =>
-          router.push('/adicionar-revisao')
-        }
+        onPress={() => router.push('/adicionar-revisao')}
       >
         <Text style={styles.addButtonText}>
           + Adicionar revisão
@@ -127,9 +182,7 @@ export default function RevisoesScreen() {
               </Text>
 
               <TouchableOpacity
-                onPress={() =>
-                  excluirRevisao(item.id)
-                }
+                onPress={() => excluirRevisao(item.id)}
               >
                 <Text style={styles.delete}>
                   Excluir
@@ -144,6 +197,12 @@ export default function RevisoesScreen() {
             <Text style={styles.info}>
               🚗 Quilometragem: {item.km} km
             </Text>
+
+            {item.valor ? (
+              <Text style={styles.info}>
+                💰 Valor: R$ {item.valor.replace('.', ',')}
+              </Text>
+            ) : null}
 
             {item.observacao ? (
               <Text style={styles.info}>

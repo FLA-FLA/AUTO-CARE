@@ -1,8 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+
 import {
   Alert,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,231 +10,633 @@ import {
   View,
 } from 'react-native';
 
-const CHAVE_VEICULO = '@autocare_veiculo';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+
+type Veiculo = {
+  id: string;
+  marca: string;
+  modelo: string;
+  ano: string;
+  placa: string;
+};
+
+type Usuario = {
+  nome: string;
+  email: string;
+  senha?: string;
+};
+
+function chaveUsuario(email: string, tipo: string) {
+  return `@autocare_${encodeURIComponent(email.trim().toLowerCase())}_${tipo}`;
+}
 
 export default function AdicionarVeiculo() {
   const [marca, setMarca] = useState('');
   const [modelo, setModelo] = useState('');
   const [ano, setAno] = useState('');
   const [placa, setPlaca] = useState('');
-  const [editando, setEditando] = useState(false);
+  const [veiculos, setVeiculos] = useState<Veiculo[]>([]);
+  const [salvando, setSalvando] = useState(false);
+  const [mensagemSucesso, setMensagemSucesso] = useState(false);
 
   useEffect(() => {
-    carregarVeiculo();
+    carregarVeiculos();
   }, []);
 
-  async function carregarVeiculo() {
+  const carregarVeiculos = async () => {
     try {
-      const dados = await AsyncStorage.getItem(CHAVE_VEICULO);
+      const logado = await AsyncStorage.getItem('@autocare_logado');
+      const usuarioSalvo = await AsyncStorage.getItem('@autocare_usuario');
 
-      if (dados) {
-        const veiculo = JSON.parse(dados);
-
-        setMarca(veiculo.marca || '');
-        setModelo(veiculo.modelo || '');
-        setAno(veiculo.ano || '');
-        setPlaca(veiculo.placa || '');
-
-        setEditando(true);
+      if (logado !== 'true' || !usuarioSalvo) {
+        router.replace('/login');
+        return;
       }
-    } catch (error) {
-      console.log('ERRO AO CARREGAR VEÍCULO:', error);
-    }
-  }
 
-  async function salvarVeiculo() {
+      const usuario: Usuario = JSON.parse(usuarioSalvo);
+
+      if (!usuario.email) {
+        router.replace('/login');
+        return;
+      }
+
+      const chaveVeiculos = chaveUsuario(usuario.email, 'veiculos');
+      const chaveVeiculoAntigo = chaveUsuario(usuario.email, 'veiculo');
+
+      const dadosLista = await AsyncStorage.getItem(chaveVeiculos);
+      const dadosAntigos = await AsyncStorage.getItem(chaveVeiculoAntigo);
+
+      let lista: Veiculo[] = [];
+
+      if (dadosLista) {
+        const dados = JSON.parse(dadosLista);
+
+        if (Array.isArray(dados)) {
+          lista = dados;
+        }
+      }
+
+      if (dadosAntigos) {
+        const antigo = JSON.parse(dadosAntigos);
+
+        if (
+          antigo &&
+          antigo.marca &&
+          antigo.modelo &&
+          !lista.some((v) => v.placa === antigo.placa)
+        ) {
+          lista.unshift({
+            id: antigo.id || String(Date.now()),
+            marca: antigo.marca,
+            modelo: antigo.modelo,
+            ano: antigo.ano || '',
+            placa: antigo.placa || '',
+          });
+        }
+      }
+
+      await AsyncStorage.setItem(
+        chaveVeiculos,
+        JSON.stringify(lista)
+      );
+
+      setVeiculos(lista);
+    } catch (error) {
+      console.log('Erro ao carregar veículos:', error);
+    }
+  };
+
+  const mostrarAlerta = (titulo: string, mensagem: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${titulo}\n\n${mensagem}`);
+    } else {
+      Alert.alert(titulo, mensagem);
+    }
+  };
+
+  const salvarVeiculo = async () => {
+    if (salvando) return;
+
+    setMensagemSucesso(false);
+
     if (
       !marca.trim() ||
       !modelo.trim() ||
       !ano.trim() ||
       !placa.trim()
     ) {
-      Alert.alert(
-        'Atenção',
-        'Preencha todas as informações do veículo.'
-      );
+      mostrarAlerta('Atenção', 'Preencha todos os campos.');
       return;
     }
 
-    const veiculo = {
-      marca: marca.trim(),
-      modelo: modelo.trim(),
-      ano: ano.trim(),
-      placa: placa.trim().toUpperCase(),
-    };
+    if (!/^\d{4}$/.test(ano.trim())) {
+      mostrarAlerta('Atenção', 'Digite um ano válido com 4 números.');
+      return;
+    }
+
+    setSalvando(true);
 
     try {
+      const usuarioSalvo = await AsyncStorage.getItem('@autocare_usuario');
+
+      if (!usuarioSalvo) {
+        mostrarAlerta(
+          'Sessão encerrada',
+          'Faça login novamente para cadastrar um veículo.'
+        );
+        router.replace('/login');
+        return;
+      }
+
+      const usuario: Usuario = JSON.parse(usuarioSalvo);
+
+      if (!usuario.email) {
+        mostrarAlerta('Erro', 'Não foi possível identificar sua conta.');
+        router.replace('/login');
+        return;
+      }
+
+      const chaveVeiculos = chaveUsuario(usuario.email, 'veiculos');
+      const chaveVeiculoAntigo = chaveUsuario(usuario.email, 'veiculo');
+
+      // Busca novamente os veículos salvos na conta atual.
+      const dadosSalvos = await AsyncStorage.getItem(chaveVeiculos);
+
+      let listaAtual: Veiculo[] = [];
+
+      if (dadosSalvos) {
+        const dados = JSON.parse(dadosSalvos);
+
+        if (Array.isArray(dados)) {
+          listaAtual = dados;
+        }
+      }
+
+      const placaFormatada = placa.trim().toUpperCase();
+
+      const placaExiste = listaAtual.some(
+        (v) => v.placa.toUpperCase() === placaFormatada
+      );
+
+      if (placaExiste) {
+        mostrarAlerta(
+          'Veículo já cadastrado',
+          'Já existe um veículo cadastrado com essa placa.'
+        );
+        return;
+      }
+
+      const novoVeiculo: Veiculo = {
+        id: `${Date.now()}`,
+        marca: marca.trim(),
+        modelo: modelo.trim(),
+        ano: ano.trim(),
+        placa: placaFormatada,
+      };
+
+      const novaLista = [...listaAtual, novoVeiculo];
+
+      // Salva os veículos somente na conta do usuário conectado.
       await AsyncStorage.setItem(
-        CHAVE_VEICULO,
-        JSON.stringify(veiculo)
+        chaveVeiculos,
+        JSON.stringify(novaLista)
       );
 
-      console.log('VEÍCULO SALVO:', veiculo);
-
-      Alert.alert(
-        editando
-          ? 'Veículo atualizado! 🚗'
-          : 'Veículo cadastrado! 🚗',
-        `${veiculo.marca} ${veiculo.modelo}\nAno: ${veiculo.ano}\nPlaca: ${veiculo.placa}`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              router.back();
-            },
-          },
-        ]
+      // Mantém também o primeiro veículo no formato antigo,
+      // mas dentro da conta do próprio usuário.
+      await AsyncStorage.setItem(
+        chaveVeiculoAntigo,
+        JSON.stringify(novaLista[0])
       );
+
+      setVeiculos(novaLista);
+
+      setMarca('');
+      setModelo('');
+      setAno('');
+      setPlaca('');
+
+      if (Platform.OS === 'web') {
+        setMensagemSucesso(true);
+      } else {
+        Alert.alert(
+          'Cadastro realizado!',
+          `${novoVeiculo.marca} ${novoVeiculo.modelo} foi salvo com sucesso!`
+        );
+      }
     } catch (error) {
-      console.log('ERRO AO SALVAR:', error);
+      console.log('Erro ao salvar veículo:', error);
 
-      Alert.alert(
+      mostrarAlerta(
         'Erro',
-        'Não foi possível salvar o veículo.'
+        'Não foi possível salvar o veículo. Tente novamente.'
       );
+    } finally {
+      setSalvando(false);
     }
-  }
+  };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.voltar}>‹ Voltar</Text>
-        </TouchableOpacity>
+    <View style={styles.container}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.botaoVoltar}
+            onPress={() => router.back()}
+          >
+            <MaterialCommunityIcons
+              name="arrow-left"
+              size={25}
+              color="#FFFFFF"
+            />
+          </TouchableOpacity>
 
-        <Text style={styles.title}>
-          {editando ? 'Alterar veículo' : 'Adicionar veículo'}
-        </Text>
+          <View style={styles.headerTextos}>
+            <Text style={styles.headerTitulo}>Adicionar veículo</Text>
+            <Text style={styles.headerSubtitulo}>
+              Gerencie todos os seus carros
+            </Text>
+          </View>
 
-        <Text style={styles.subtitle}>
-          {editando
-            ? 'Edite os dados do seu veículo'
-            : 'Cadastre seu veículo no Auto Care'}
-        </Text>
-      </View>
+          <View style={styles.headerIcone}>
+            <MaterialCommunityIcons
+              name="car-multiple"
+              size={38}
+              color="#FFFFFF"
+            />
+          </View>
+        </View>
 
-      <View style={styles.form}>
-        <Text style={styles.label}>Marca</Text>
+        <View style={styles.card}>
+          <View style={styles.iconePrincipal}>
+            <MaterialCommunityIcons
+              name="car-plus"
+              size={48}
+              color="#55ADFF"
+            />
+          </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Ex.: Volkswagen"
-          value={marca}
-          onChangeText={setMarca}
-        />
+          <Text style={styles.titulo}>Novo veículo</Text>
 
-        <Text style={styles.label}>Modelo</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ex.: Gol"
-          value={modelo}
-          onChangeText={setModelo}
-        />
-
-        <Text style={styles.label}>Ano</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ex.: 2020"
-          keyboardType="numeric"
-          value={ano}
-          onChangeText={setAno}
-        />
-
-        <Text style={styles.label}>Placa</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ex.: ABC1D23"
-          autoCapitalize="characters"
-          value={placa}
-          onChangeText={setPlaca}
-        />
-
-        <TouchableOpacity
-          style={styles.button}
-          onPress={salvarVeiculo}
-        >
-          <Text style={styles.buttonText}>
-            {editando ? 'Salvar alterações' : 'Salvar veículo'}
+          <Text style={styles.subtitulo}>
+            Cadastre quantos veículos quiser para organizar tudo em um só lugar.
           </Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+
+          <Text style={styles.label}>Marca</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex.: Volkswagen"
+            placeholderTextColor="#8295AA"
+            value={marca}
+            onChangeText={setMarca}
+          />
+
+          <Text style={styles.label}>Modelo</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex.: Polo"
+            placeholderTextColor="#8295AA"
+            value={modelo}
+            onChangeText={setModelo}
+          />
+
+          <Text style={styles.label}>Ano</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex.: 2025"
+            placeholderTextColor="#8295AA"
+            keyboardType="numeric"
+            maxLength={4}
+            value={ano}
+            onChangeText={setAno}
+          />
+
+          <Text style={styles.label}>Placa</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Ex.: ABC1D23"
+            placeholderTextColor="#8295AA"
+            autoCapitalize="characters"
+            maxLength={7}
+            value={placa}
+            onChangeText={setPlaca}
+          />
+
+          {mensagemSucesso && (
+            <View style={styles.sucessoBox}>
+              <MaterialCommunityIcons
+                name="check-circle"
+                size={25}
+                color="#36C98F"
+              />
+
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.sucessoTitulo}>
+                  Salvo com sucesso!
+                </Text>
+
+                <Text style={styles.sucessoTexto}>
+                  Seu veículo foi cadastrado no Auto Care.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.infoBox}>
+            <MaterialCommunityIcons
+              name="information-outline"
+              size={21}
+              color="#55ADFF"
+            />
+
+            <Text style={styles.infoTexto}>
+              Você já possui {veiculos.length} veículo(s) cadastrado(s).
+              Cada carro terá seu próprio cadastro.
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.botaoSalvar,
+              salvando && styles.botaoDesabilitado,
+            ]}
+            onPress={salvarVeiculo}
+            activeOpacity={0.8}
+            disabled={salvando}
+          >
+            <MaterialCommunityIcons
+              name="content-save-outline"
+              size={21}
+              color="#FFFFFF"
+            />
+
+            <Text style={styles.textoBotao}>
+              {salvando ? 'SALVANDO...' : 'CADASTRAR VEÍCULO'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.botaoCancelar}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.textoCancelar}>VOLTAR</Text>
+          </TouchableOpacity>
+        </View>
+
+        {veiculos.length > 0 && (
+          <View style={styles.listaContainer}>
+            <Text style={styles.listaTitulo}>
+              Seus veículos cadastrados
+            </Text>
+
+            {veiculos.map((veiculo) => (
+              <View style={styles.veiculoCard} key={veiculo.id}>
+                <View style={styles.veiculoIcone}>
+                  <MaterialCommunityIcons
+                    name="car"
+                    size={29}
+                    color="#55ADFF"
+                  />
+                </View>
+
+                <View style={styles.veiculoInfo}>
+                  <Text style={styles.veiculoNome}>
+                    {veiculo.marca} {veiculo.modelo}
+                  </Text>
+
+                  <Text style={styles.veiculoDetalhe}>
+                    Ano: {veiculo.ano} • Placa: {veiculo.placa}
+                  </Text>
+                </View>
+
+                <MaterialCommunityIcons
+                  name="check-circle"
+                  size={23}
+                  color="#36C98F"
+                />
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F4F7FB',
+    backgroundColor: '#07111F',
   },
-
+  scrollContent: {
+    paddingBottom: 35,
+  },
   header: {
-    backgroundColor: '#208AEF',
+    backgroundColor: '#0B1B30',
     paddingTop: 55,
-    paddingBottom: 30,
-    paddingHorizontal: 24,
-    borderBottomLeftRadius: 25,
-    borderBottomRightRadius: 25,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#183653',
   },
-
-  voltar: {
+  botaoVoltar: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#183653',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTextos: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  headerTitulo: {
     color: '#FFFFFF',
-    fontSize: 17,
-    marginBottom: 20,
+    fontSize: 22,
+    fontWeight: '800',
   },
-
-  title: {
-    color: '#FFFFFF',
-    fontSize: 27,
-    fontWeight: 'bold',
+  headerSubtitulo: {
+    color: '#9CB2C9',
+    fontSize: 12,
+    marginTop: 4,
   },
-
-  subtitle: {
-    color: '#EAF4FF',
-    fontSize: 15,
-    marginTop: 6,
-  },
-
-  form: {
-    backgroundColor: '#FFFFFF',
-    margin: 20,
-    padding: 20,
+  headerIcone: {
+    width: 58,
+    height: 58,
     borderRadius: 18,
-    elevation: 3,
+    backgroundColor: '#183653',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
   },
-
-  label: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 7,
-    marginTop: 12,
-  },
-
-  input: {
+  card: {
+    backgroundColor: '#0B1B30',
+    marginHorizontal: 18,
+    marginTop: 18,
+    borderRadius: 24,
+    padding: 23,
     borderWidth: 1,
-    borderColor: '#D5DCE5',
-    borderRadius: 10,
+    borderColor: '#183653',
+  },
+  iconePrincipal: {
+    width: 82,
+    height: 82,
+    borderRadius: 24,
+    backgroundColor: '#102B47',
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginBottom: 17,
+  },
+  titulo: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  subtitulo: {
+    fontSize: 13,
+    color: '#9CB2C9',
+    textAlign: 'center',
+    lineHeight: 19,
+    marginTop: 7,
+    marginBottom: 25,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#DCE9F7',
+    marginBottom: 7,
+  },
+  input: {
+    height: 53,
+    backgroundColor: '#071A2D',
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    marginBottom: 17,
+    borderWidth: 1,
+    borderColor: '#244563',
+    fontSize: 15,
+    color: '#FFFFFF',
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#102B47',
+    borderRadius: 13,
     paddingHorizontal: 14,
     paddingVertical: 13,
-    fontSize: 16,
-    backgroundColor: '#FAFBFC',
+    marginTop: 2,
+    marginBottom: 20,
   },
-
-  button: {
-    backgroundColor: '#208AEF',
-    paddingVertical: 15,
-    borderRadius: 12,
+  infoTexto: {
+    flex: 1,
+    color: '#B5C9DD',
+    fontSize: 12,
+    lineHeight: 18,
+    marginLeft: 10,
+  },
+  sucessoBox: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#103B35',
+    borderColor: '#247B61',
+    borderWidth: 1,
+    borderRadius: 13,
+    padding: 14,
+    marginBottom: 17,
+  },
+  sucessoTitulo: {
+    color: '#55E0A8',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  sucessoTexto: {
+    color: '#C0E9D9',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  botaoSalvar: {
+    height: 55,
+    backgroundColor: '#087BE5',
+    borderRadius: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  botaoDesabilitado: {
+    opacity: 0.6,
+  },
+  textoBotao: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginLeft: 9,
+  },
+  botaoCancelar: {
+    height: 47,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#244563',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  textoCancelar: {
+    color: '#AFC4D9',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  listaContainer: {
+    marginHorizontal: 18,
     marginTop: 25,
   },
-
-  buttonText: {
-    color: '#FFFFFF',
+  listaTitulo: {
     fontSize: 17,
-    fontWeight: 'bold',
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 13,
+  },
+  veiculoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0B1B30',
+    borderWidth: 1,
+    borderColor: '#183653',
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 10,
+  },
+  veiculoIcone: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#102B47',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  veiculoInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  veiculoNome: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  veiculoDetalhe: {
+    color: '#9CB2C9',
+    fontSize: 11,
+    marginTop: 5,
   },
 });
