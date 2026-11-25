@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Auto Care",
+    "slug": "auto-care",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "autocare",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.jesussilvarjs.autocare"
+    },
+    "ios": {},
+    "web": {
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-image",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permita que o Auto Care acesse suas fotos para adicionar imagens ao anúncio do veículo.",
+          "cameraPermission": "Permita que o Auto Care use a câmera para fotografar o veículo.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-splash-screen",
+      "expo-status-bar",
+      "expo-web-browser"
+    ]
+  }
+}
